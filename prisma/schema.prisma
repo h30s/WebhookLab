@@ -1,0 +1,115 @@
+// WebhookLab data model.
+//
+// The domain is deliberately small but shaped like a real payment-webhook
+// pipeline: an incoming event is recorded once (idempotently), processed
+// against a wallet inside a transaction, and every attempt is logged.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+enum WebhookAttemptStatus {
+  SUCCEEDED
+  FAILED
+}
+
+enum TransactionDirection {
+  CREDIT
+  DEBIT
+}
+
+/// A merchant/customer that receives payments and owns one wallet per currency.
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  wallets Wallet[]
+  events  WebhookEvent[]
+}
+
+model Wallet {
+  id           String   @id @default(cuid())
+  userId       String
+  currency     String   @default("USD")
+  balanceCents Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@unique([userId, currency])
+  @@index([userId])
+}
+
+/// One received webhook delivery, keyed by the provider's own event id.
+model WebhookEvent {
+  id              String             @id @default(cuid())
+  providerEventId String
+  type            String
+  status          WebhookEventStatus @default(RECEIVED)
+  payload         Json
+  attempts        Int                @default(0)
+  maxAttempts     Int                @default(3)
+  lastError       String?
+  userId          String?
+  receivedAt      DateTime           @default(now())
+  processedAt     DateTime?
+  nextRetryAt     DateTime?
+
+  user         User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  transactions WalletTransaction[]
+  attemptLog   WebhookAttempt[]
+
+  @@index([status])
+  @@index([receivedAt])
+}
+
+/// Audit trail: one row per processing attempt, including retries.
+model WebhookAttempt {
+  id           String               @id @default(cuid())
+  eventId      String
+  attempt      Int
+  status       WebhookAttemptStatus
+  error        String?
+  durationMs   Int
+  createdAt    DateTime             @default(now())
+
+  event WebhookEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, attempt])
+  @@index([eventId])
+}
+
+/// Wallet ledger entry. `webhookEventId` is unique so an event can never
+/// move money twice, even if it is processed or retried more than once.
+model WalletTransaction {
+  id                String               @id @default(cuid())
+  walletId          String
+  webhookEventId    String?              @unique
+  direction         TransactionDirection
+  amountCents       Int
+  currency          String
+  balanceAfterCents Int
+  description       String
+  createdAt         DateTime             @default(now())
+
+  wallet       Wallet        @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  webhookEvent WebhookEvent? @relation(fields: [webhookEventId], references: [id], onDelete: SetNull)
+
+  @@index([walletId, createdAt])
+}
