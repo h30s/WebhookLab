@@ -95,12 +95,12 @@ model WebhookAttempt {
   @@index([eventId])
 }
 
-/// Wallet ledger entry. `webhookEventId` is unique so an event can never
-/// move money twice, even if it is processed or retried more than once.
+/// Wallet ledger entry. BUG: the unique constraint on webhookEventId has
+/// been removed, so an event can credit the wallet multiple times.
 model WalletTransaction {
   id                String               @id @default(cuid())
   walletId          String
-  webhookEventId    String?              @unique
+  webhookEventId    String?
   direction         TransactionDirection
   amountCents       Int
   currency          String

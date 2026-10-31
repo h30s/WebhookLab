@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { DuplicateLedgerEntryError, NotFoundError } from "@/lib/errors";
+import { NotFoundError } from "@/lib/errors";
 import type {
   CreateEventInput,
   CreateTransactionInput,
@@ -250,21 +250,16 @@ export class PrismaWebhookStore implements WebhookStore {
   }
 
   async createTransaction(input: CreateTransactionInput): Promise<WalletTransactionRecord> {
-    try {
-      return await this.db.walletTransaction.create({ data: input });
-    } catch (error) {
-      // The unique index on webhookEventId is the last line of defence against
-      // an event moving money twice. Surface it as a typed error so the service
-      // can recognise it instead of reporting a generic failure.
-      if (isUniqueViolation(error) && input.webhookEventId) {
-        throw new DuplicateLedgerEntryError(input.webhookEventId);
-      }
-      throw error;
-    }
+    // BUG: duplicate-ledger-entry guard removed. The unique constraint on
+    // webhookEventId no longer exists, so the same event can create multiple
+    // ledger entries and credit the wallet more than once.
+    return this.db.walletTransaction.create({ data: input });
   }
 
   async findTransactionByEventId(webhookEventId: string): Promise<WalletTransactionRecord | null> {
-    return this.db.walletTransaction.findUnique({ where: { webhookEventId } });
+    // BUG: findUnique replaced with findFirst because webhookEventId is no
+    // longer a unique column.
+    return this.db.walletTransaction.findFirst({ where: { webhookEventId } });
   }
 
   async listTransactions(limit = 100): Promise<WalletTransactionRecord[]> {

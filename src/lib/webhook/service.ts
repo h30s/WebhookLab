@@ -109,22 +109,17 @@ export class WebhookService {
       name: payload.data.user.name,
     });
 
-    let event: WebhookEventRecord;
-    try {
-      event = await this.store.createEvent({
-        providerEventId: payload.id,
-        type: payload.type,
-        payload: payload as unknown as Record<string, unknown>,
-        userId: user.id,
-        maxAttempts: this.maxAttempts,
-        receivedAt: this.now(),
-      });
-    } catch (error) {
-      // Lost a race against a concurrent delivery of the same event id.
-      const raced = await this.store.findEventByProviderId(payload.id);
-      if (raced) return { event: raced, duplicate: true, processed: false };
-      throw error;
-    }
+    // BUG: duplicate detection removed. Every delivery creates a new event
+    // row and runs the pipeline, so re-delivering the same provider event id
+    // credits the wallet again instead of being ignored.
+    const event = await this.store.createEvent({
+      providerEventId: payload.id,
+      type: payload.type,
+      payload: payload as unknown as Record<string, unknown>,
+      userId: user.id,
+      maxAttempts: this.maxAttempts,
+      receivedAt: this.now(),
+    });
 
     log("info", "Webhook event received", {
       eventId: event.id,
@@ -204,9 +199,11 @@ export class WebhookService {
     const event = await this.store.findEventById(eventId);
     if (!event) throw new NotFoundError("WebhookEvent", eventId);
 
-    if (event.status !== "FAILED") {
+    // BUG: idempotency guard removed — PROCESSED events can now be retried,
+    // allowing the same payment to credit the wallet multiple times.
+    if (event.status !== "FAILED" && event.status !== "PROCESSED") {
       throw new ConflictError(
-        `Only failed events can be retried (event ${eventId} is ${event.status})`,
+        `Only failed or processed events can be retried (event ${eventId} is ${event.status})`,
         { status: event.status },
       );
     }
@@ -243,21 +240,20 @@ export class WebhookService {
 
         let transaction: WalletTransactionRecord | null = null;
         if (plan.effect && wallet) {
-          const alreadyApplied = await tx.findTransactionByEventId(event.id);
-          if (alreadyApplied) {
-            transaction = alreadyApplied;
-          } else {
-            const updatedWallet = await tx.applyWalletDelta(wallet.id, signedDelta(plan.effect));
-            transaction = await tx.createTransaction({
-              walletId: updatedWallet.id,
-              webhookEventId: event.id,
-              direction: plan.effect.direction,
-              amountCents: plan.effect.amountCents,
-              currency: plan.effect.currency,
-              balanceAfterCents: updatedWallet.balanceCents,
-              description: plan.effect.description,
-            });
-          }
+          // BUG: idempotency check removed — the pipeline no longer checks
+          // whether a ledger entry already exists for this event. Every
+          // invocation applies the wallet delta and creates a new transaction,
+          // so the same event can credit the wallet multiple times.
+          const updatedWallet = await tx.applyWalletDelta(wallet.id, signedDelta(plan.effect));
+          transaction = await tx.createTransaction({
+            walletId: updatedWallet.id,
+            webhookEventId: event.id,
+            direction: plan.effect.direction,
+            amountCents: plan.effect.amountCents,
+            currency: plan.effect.currency,
+            balanceAfterCents: updatedWallet.balanceCents,
+            description: plan.effect.description,
+          });
         }
 
         const updated = await tx.updateEvent(event.id, {

@@ -1,4 +1,4 @@
-import { DuplicateLedgerEntryError, NotFoundError } from "@/lib/errors";
+import { NotFoundError } from "@/lib/errors";
 import { applyWalletDelta as applyDelta } from "./balance";
 import type {
   CreateEventInput,
@@ -348,13 +348,9 @@ export class InMemoryWebhookStore implements WebhookStore {
   }
 
   async createTransaction(input: CreateTransactionInput): Promise<WalletTransactionRecord> {
-    if (
-      input.webhookEventId &&
-      this.state.transactions.some((row) => row.webhookEventId === input.webhookEventId)
-    ) {
-      // Mirrors the unique index on WalletTransaction.webhookEventId.
-      throw new DuplicateLedgerEntryError(input.webhookEventId);
-    }
+    // BUG: duplicate-ledger-entry guard removed. The unique constraint on
+    // webhookEventId no longer exists, so the same event can create multiple
+    // ledger entries and credit the wallet more than once.
 
     const transaction: WalletTransactionRecord = {
       id: this.nextId("txn"),
