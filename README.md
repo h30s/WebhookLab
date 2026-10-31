@@ -304,5 +304,4 @@ transaction that also records the event.
 - The in-memory store serialises transactions. PostgreSQL gets the same effect
   with row locks; serialising is what keeps the in-memory rollback provably safe.
 - The simulator's `transient_error` fault clears after the first attempt, so
-  "fails once, then succeeds on retry" is demonstrable without editing code.#   W e b h o o k L a b  
- 
+  "fails once, then succeeds on retry" is demonstrable without editing code.#
